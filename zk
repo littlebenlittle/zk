@@ -1,0 +1,78 @@
+#!/bin/sh
+
+init() {
+    if [ -f "./_zettel.json" ]; then
+        echo '_zettel.json already exists'
+        exit 1
+    fi
+    now=$(date --iso-8601=seconds)
+    jq >_zettel.json <<EOF
+{
+    "meta": {
+        "created": "$now",
+        "modified": "$now"
+    },
+    "zettels": {}
+}
+EOF
+    echo "initalized new zk metadatabase at ./_zettel.json"
+}
+
+usage() {
+    cat >&1 <<EOM
+invalid use!
+EOM
+}
+
+new() {
+    now=$(date --iso-8601=seconds)
+    date=$(date '+%Y-%m-%d')
+    if [ -z "$1" ]
+        then title="my note"
+        else title=$1
+    fi
+    escaped_title=$(echo "$title" | sed -e 's/\s/-/g')
+    file_suffix="md"
+    path="$date-$escaped_title.$file_suffix"
+    uuid=$(uuid)
+    if [ -f "$path" ]; then
+        echo "$path exists"
+        exit 1
+    fi
+    cat >"$path" <<EOF
+---
+uuid: "$uuid"
+title: "$title"
+---
+
+EOF
+    metadata=$(jq -r <<EOF
+{
+    "created": "$now",
+    "modified": "$now",
+    "path": "$path"
+}
+EOF
+)
+    tmp=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm $tmp" EXIT
+    jq ".meta.modified |= \"$now\" | .zettels.\"$uuid\" |= $metadata" _zettel.json > "$tmp"
+    jq < "$tmp" > _zettel.json
+    echo "created a new zettel at $path"
+}
+
+update() {
+    find . -type f -maxdepth 1 -exec "$(dirname "$ZK_BIN")"/zk.d/check_for_update.sh {} +
+}
+
+case "$1" in
+    'init') init
+    ;;
+    'new') new "$2"
+    ;;
+    'update') update
+    ;;
+    *) usage
+    ;;
+esac
