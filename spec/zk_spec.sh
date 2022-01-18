@@ -132,14 +132,30 @@ title: "another note"
     It 'can update a file that has moved'
         mv 2022-01-03-another-note.md 2022-01-05-cool-title.md
         When call zk update
-        The output should equal 'updated
-    2022-01-03-another-note.md -> 2022-01-05-cool-title.md
-'
+        The output should equal '2022-01-03-another-note.md -> 2022-01-05-cool-title.md'
     End
 
     It 'tracks the update in the metadatabase file'
         When call jq --raw-output '.zettels."c5a8e8c4-7625-11ec-9595-00163e5e6c00".path' _zettel.json
         The output should equal '2022-01-05-cool-title.md'
+    End
+
+    It 'can update multiple files that have moved'
+        mv 2022-01-05-cool-title.md 2022-01-05-cooler-title.md
+        mv 2022-01-02-my-note.md 2022-01-02-an-actual-title.md
+        When call zk update
+        The output should equal '2022-01-02-my-note.md -> 2022-01-02-an-actual-title.md
+2022-01-05-cool-title.md -> 2022-01-05-cooler-title.md'
+    End
+
+    It 'tracks the update of the first zettel in the metadatabase file'
+        When call jq --raw-output '.zettels."8918f638-7620-11ec-b116-00163e5e6c00".path' _zettel.json
+        The output should equal '2022-01-02-an-actual-title.md'
+    End
+
+    It 'tracks the update of the second zettel in the metadatabase file'
+        When call jq --raw-output '.zettels."c5a8e8c4-7625-11ec-9595-00163e5e6c00".path' _zettel.json
+        The output should equal '2022-01-05-cooler-title.md'
     End
 
 End

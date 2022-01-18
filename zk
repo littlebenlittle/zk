@@ -54,16 +54,36 @@ EOF
 }
 EOF
 )
-    tmp=$(mktemp)
-    # shellcheck disable=SC2064
-    trap "rm $tmp" EXIT
-    jq ".meta.modified |= \"$now\" | .zettels.\"$uuid\" |= $metadata" _zettel.json > "$tmp"
-    jq < "$tmp" > _zettel.json
+    update_metadata ".zettels.\"$uuid\"" "$metadata"
+    update_metadata ".meta.modified" "\"$now\""
     echo "created a new zettel at $path"
 }
 
+update_metadata() {
+    tmp=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm $tmp" EXIT
+    now=$(date --iso-8601=seconds)
+    jq "$1  |= $2" _zettel.json >"$tmp"
+    jq <"$tmp" >_zettel.json
+}
+
 update() {
-    find . -type f -maxdepth 1 -exec "$(dirname "$ZK_BIN")"/zk.d/check_for_update.sh {} +
+    for zettel in ./*; do
+        if ! echo "$zettel" | grep -q '_zettel\.json'; then
+            start=$(grep -n -m 1 '^---$' "$zettel" | cut -d : -f 1)
+            end=$(grep -n -m 2 '^---$' "$zettel" | tail -n 1 | cut -d : -f 1)
+            uuid=$(tail -n "+$(($start + 1))" <"$zettel" | head -n "+$(($end - $start - 1))" | yj | jq -r '.uuid')
+            path=$(jq -r ".zettels.\"$uuid\".path" ./_zettel.json)
+            newpath=$(basename "$zettel")
+            if [ ! "$path" = "$newpath" ]; then
+                update_metadata ".zettels.\"$uuid\".path" "\"$newpath\""
+                echo "$path -> $newpath"
+            fi
+            now=$(date --iso-8601=seconds)
+            update_metadata ".meta.modified" "\"$now\""
+        fi
+    done
 }
 
 case "$1" in
