@@ -18,7 +18,7 @@ impl<T: Database> AsRef<Self> for Args<T> {
 /// Initialize a new zk database
 pub fn run<T: Database>(args: impl AsRef<Args<T>>) -> Result<()> {
     let args: &Args<T> = args.as_ref();
-    let mut database = T::from_config(args.db_cfg.clone());
+    let mut database = T::from_config(args.db_cfg.clone())?;
     database.init()?;
     database.commit()?;
     Ok(())

@@ -23,8 +23,8 @@ pub enum Error {
 /// create a new zettel
 pub fn run<T: Database>(args: impl AsRef<Args<T>>) -> Result<()> {
     let args: &Args<T> = args.as_ref();
-    let mut database = T::from_config(args.db_cfg.clone());
-    database.new_zettel(args.title.clone())?;
+    let mut database = T::from_config(args.db_cfg.clone())?;
+    database.new_zettel(&args.title)?;
     database.commit()?;
     Ok(())
 }

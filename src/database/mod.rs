@@ -1,6 +1,7 @@
 pub mod yaml;
 
 use std::str::FromStr;
+use crate::zettel::Zettel;
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,11 +31,11 @@ impl std::fmt::Display for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-pub trait Database: std::fmt::Debug {
+pub trait Database: std::fmt::Debug + Sized {
     type Config: FromStr<Err = Error> + AsRef<Self::Config> + Clone;
 
     /// create a new database with the given config
-    fn from_config(cfg: impl AsRef<Self::Config>) -> Self;
+    fn from_config(cfg: impl AsRef<Self::Config>) -> Result<Self>;
 
     /// initialize the database
     fn init(&mut self) -> Result<()>;
@@ -44,5 +45,5 @@ pub trait Database: std::fmt::Debug {
 
     /// create a new zettel with the given title. Returns
     /// the path
-    fn new_zettel(&mut self, title: String) -> Result<()>;
+    fn new_zettel(&mut self, title: &str) -> Result<Zettel>;
 }
