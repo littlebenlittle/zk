@@ -1,61 +1,93 @@
-mod command;
-use command::{init, new, sync};
 mod database;
 mod zettel;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 struct Args {
+    #[clap(default_value = ".", long)]
+    root_dir: PathBuf,
     #[clap(subcommand)]
     cmd: Command,
 }
 
-type Database = database::yaml::Database;
-
 #[derive(Debug, Subcommand)]
 enum Command {
-    Init(init::Args<Database>),
-    New(new::Args<Database>),
-    Sync(sync::Args<Database>)
+    /// Initialize a new database
+    Init,
+    /// Create a new zettel
+    New(NewArgs),
+    /// Sync changes to zettels with the database
+    Sync,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct NewArgs {
+    pub title: String,
 }
 
 #[derive(Debug)]
 pub enum Error {
-    DatabaseError(database::Error),
-    NewCommandError(new::Error),
+    IoError(std::io::Error),
+    SerializationError(serde_yaml::Error),
+    DirNotEmpty,
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::DatabaseError(e) => write!(f, "database error: {e}"),
-            _ => write!(f, "unhandled error")
-        }
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
     }
 }
 
-impl From<database::Error> for Error {
-    fn from(e: database::Error) -> Self {
-        Self::DatabaseError(e)
+impl From<std::io::ErrorKind> for Error {
+    fn from(e: std::io::ErrorKind) -> Self {
+        Self::IoError(e.into())
     }
 }
 
-impl From<new::Error> for Error {
-    fn from(e: new::Error) -> Self {
-        Self::NewCommandError(e)
+impl From<serde_yaml::Error> for Error {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::SerializationError(e)
     }
 }
 
 impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("database error")
+    }
+}
+
 type Result<T> = std::result::Result<T, Error>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let mut db = database::yaml::Database::new(args.root_dir)?;
+    let mut zk = db.get_zk()?;
     match args.cmd {
-        Command::Init(a) => init::run(a)?,
-        Command::New(a) => new::run(a)?,
-        Command::Sync(a) => sync::run(a)?,
+        Command::Init => {}
+        Command::New(args) => {
+            use rand::Rng;
+            let id: String = rand::thread_rng()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .take(18)
+                .map(char::from)
+                .collect();
+            let zettel = db.new_zettel(&args.title, &id)?;
+            zk.add(&zettel)?;
+            match db.commit(&zk) {
+                Ok(()) => {}
+                Err(e) => {
+                    zk.rm(zettel)?;
+                    return Err(e.into());
+                }
+            }
+        }
+        Command::Sync => unimplemented!(),
     }
+    db.commit(zk)?;
     Ok(())
 }
