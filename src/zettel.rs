@@ -1,12 +1,12 @@
-use crate::Result;
+use crate::{DateTime, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, io::prelude::*, path::PathBuf};
 
 /// Metadata for a zettel
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Zettel {
-    pub created: String,
-    pub modified: String,
+    pub created: DateTime,
+    pub modified: DateTime,
     pub title: String,
     pub filename: String,
     #[serde(skip)]
@@ -25,11 +25,14 @@ impl AsRef<Self> for Zettel {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Zettelkasten {
     pub meta: ZkMeta,
+    pub default_frontmatter: serde_yaml::Mapping,
     pub zettels: HashMap<String, Zettel>,
 }
 
 #[derive(Debug)]
-enum Error {}
+pub enum Error {
+    UnknownField
+}
 
 impl AsRef<Self> for Zettelkasten {
     fn as_ref<'a>(&'a self) -> &'a Self {
@@ -38,13 +41,10 @@ impl AsRef<Self> for Zettelkasten {
 }
 
 impl Zettelkasten {
-    pub fn new() -> Self {
-        let now = chrono::Local::now().to_rfc3339();
+    pub fn new(meta: ZkMeta, default_frontmatter: serde_yaml::Mapping) -> Self {
         Self {
-            meta: ZkMeta {
-                created: now.clone(),
-                modified: now,
-            },
+            meta,
+            default_frontmatter,
             zettels: HashMap::new(),
         }
     }
@@ -63,8 +63,15 @@ impl Zettelkasten {
 
     pub fn default_frontmatter(&self, zettel: &Zettel) -> Result<String> {
         let mut meta = serde_yaml::Mapping::new();
-        meta.insert("id".into(), zettel.id.clone().into());
-        meta.insert("title".into(), zettel.title.clone().into());
+        for (key, val) in &self.default_frontmatter {
+            let key = key
+                .as_str()
+                .expect("default_frontmatter keys should be of type str");
+            let val = val
+                .as_str()
+                .expect("default_frontmatter vals should be of type str");
+            meta.insert(key.into(), self.parse_global(val, zettel)?.into());
+        }
         let fm = format!("{}---\n\n", serde_yaml::to_string(&meta)?);
         Ok(fm)
     }
@@ -74,13 +81,26 @@ impl Zettelkasten {
         std::fs::remove_file(zettel.rel_path.clone())?;
         Ok(())
     }
+
+    fn parse_global(&self, val: &str, zettel: &Zettel) -> Result<String> {
+        if ! val.starts_with("@") {
+            return Ok(val.to_owned())
+        }
+        match &val[1..] {
+            "title" => Ok(zettel.title.to_owned()),
+            "id" => Ok(zettel.id.to_owned()),
+            "created" => Ok(zettel.created.format("%Y-%m-%d").to_string()),
+            _ => Err(Error::UnknownField.into())
+        }
+    }
 }
+
 
 /// Metadata about the database
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ZkMeta {
     /// database creation time
-    created: String,
+    pub created: DateTime,
     /// last modificiation time
-    modified: String,
+    pub modified: DateTime,
 }

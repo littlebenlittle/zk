@@ -32,6 +32,8 @@ pub struct NewArgs {
 pub enum Error {
     IoError(std::io::Error),
     SerializationError(serde_yaml::Error),
+    ZettelError(zettel::Error),
+    ChronoParseError(chrono::ParseError),
     DirNotEmpty,
 }
 
@@ -53,6 +55,18 @@ impl From<serde_yaml::Error> for Error {
     }
 }
 
+impl From<zettel::Error> for Error {
+    fn from(e: zettel::Error) -> Self {
+        Self::ZettelError(e)
+    }
+}
+
+impl From<chrono::ParseError> for Error {
+    fn from(e: chrono::ParseError) -> Self {
+        Self::ChronoParseError(e)
+    }
+}
+
 impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
@@ -62,6 +76,7 @@ impl std::fmt::Display for Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
+type DateTime = chrono::DateTime<chrono::Local>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -76,7 +91,8 @@ fn main() -> Result<()> {
                 .take(18)
                 .map(char::from)
                 .collect();
-            let zettel = db.new_zettel(&args.title, &id)?;
+            let now = chrono::Local::now();
+            let zettel = db.new_zettel(&args.title, &id, now)?;
             zk.add(&zettel)?;
             match db.commit(&zk) {
                 Ok(()) => {}

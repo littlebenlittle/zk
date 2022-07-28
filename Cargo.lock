@@ -40,6 +40,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits",
+ "serde",
  "time",
  "winapi",
 ]
@@ -82,6 +83,12 @@ checksum = "2850f2f5a82cbf437dd5af4d49848fbdfc27c157c3d010345776f952765261c5"
 dependencies = [
  "os_str_bytes",
 ]
+
+[[package]]
+name = "extract-frontmatter"
+version = "4.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "426c23bd8fdd0cfde248e0481b4013cd186feb92fede97d6097d693abac6eeb2"
 
 [[package]]
 name = "fuchsia-cprng"
@@ -469,6 +476,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "extract-frontmatter",
  "rand 0.8.5",
  "serde",
  "serde_yaml",

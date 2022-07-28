@@ -1,6 +1,6 @@
 use crate::{
-    zettel::{Zettel, Zettelkasten},
-    Result,
+    zettel::{Zettel, Zettelkasten, ZkMeta},
+    DateTime, Result,
 };
 use chrono::prelude::*;
 use std::{fs::File, path::PathBuf};
@@ -22,7 +22,18 @@ impl Database {
             let file = File::open(path)?;
             serde_yaml::from_reader(file)?
         } else {
-            Zettelkasten::new()
+            let now = chrono::Local::now();
+            let mut default_frontmatter = serde_yaml::Mapping::new();
+            default_frontmatter.insert("title".into(), "@title".into());
+            default_frontmatter.insert("id".into(), "@id".into());
+            default_frontmatter.insert("date".into(), "@created".into());
+            Zettelkasten::new(
+                ZkMeta {
+                    created: now,
+                    modified: now,
+                },
+                default_frontmatter,
+            )
         };
         return Ok(zk);
     }
@@ -43,13 +54,17 @@ impl Database {
         Ok(())
     }
 
-    pub fn new_zettel(&mut self, title: impl AsRef<str>, id: impl AsRef<str>) -> Result<Zettel> {
-        let now = Local::now().to_rfc3339();
+    pub fn new_zettel(
+        &mut self,
+        title: impl AsRef<str>,
+        id: impl AsRef<str>,
+        date: DateTime,
+    ) -> Result<Zettel> {
         let rel_path = self.make_filename(title.as_ref());
         let filename = rel_path.file_name().unwrap().to_str().unwrap().to_owned();
         let zettel = Zettel {
-            created: now.clone(),
-            modified: now.clone(),
+            created: date,
+            modified: date,
             id: id.as_ref().to_owned(),
             title: title.as_ref().to_owned(),
             filename,
@@ -64,14 +79,7 @@ mod test {
     use tempdir::TempDir;
 
     #[test]
-    fn init_db() {
-        match run_init_db_test() {
-            Ok(v) => v,
-            Err(e) => panic!("{e}"),
-        }
-    }
-
-    fn run_init_db_test() -> Result<()> {
+    fn init_db() -> Result<()> {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let mut db = Database::new(PathBuf::from(tmp_dir.path())).expect("could not create db");
         let zk = db.get_zk()?;
@@ -85,22 +93,42 @@ mod test {
     }
 
     #[test]
-    fn new_zettel() {
-        match run_new_zettel_test() {
-            Ok(v) => v,
-            Err(e) => panic!("{e}"),
-        }
-    }
-
-    fn run_new_zettel_test() -> Result<()> {
+    fn new_zettel() -> Result<()> {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let root_dir = PathBuf::from(tmp_dir.path());
         let mut db = Database::new(root_dir.clone())?;
         let mut zk = db.get_zk()?;
         let id = "123456";
-        let zettel = db.new_zettel("a new blog post", id)?;
+        let dt = chrono::Local.timestamp(1431648000, 0);
+        let title = "a new blog post";
+        let zettel = db.new_zettel(title, id, dt)?;
         zk.add(&zettel)?;
         assert!(zettel.rel_path.exists(), "new zettel was not created on fs");
+        let data = std::fs::read_to_string(zettel.rel_path)?;
+        let (fm, _) = {
+            use extract_frontmatter::{config::Splitter, Extractor};
+            let fm_extractor = Extractor::new(Splitter::EnclosingLines("---"));
+            fm_extractor.extract(&data)
+        };
+        let meta: serde_yaml::Mapping = serde_yaml::from_str(&fm)?;
+        assert_eq!(
+            id,
+            meta.get(&"id".into())
+                .expect("frontmatter should containt field 'id'"),
+            "id in frontmatter does not match"
+        );
+        assert_eq!(
+            "2015-05-14",
+            meta.get(&"date".into())
+                .expect("frontmatter should containt field 'date'"),
+            "date in frontmatter does not match"
+        );
+        assert_eq!(
+            title,
+            meta.get(&"title".into())
+                .expect("frontmatter should containt field 'title'"),
+            "title in frontmatter does not match"
+        );
         db.commit(zk)?;
         let new_zk = db.get_zk()?;
         assert!(
