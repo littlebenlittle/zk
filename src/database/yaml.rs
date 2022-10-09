@@ -3,7 +3,7 @@ use crate::{
     DateTime, Result,
 };
 use chrono::prelude::*;
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::{Path, PathBuf}};
 
 #[derive(Debug)]
 pub struct Database {
@@ -12,7 +12,11 @@ pub struct Database {
 
 impl Database {
     pub fn new(root_dir: PathBuf) -> Result<Self> {
-        Ok(Self { root_dir })
+        Ok(Self { root_dir: std::fs::canonicalize(root_dir).unwrap() })
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        self.root_dir.as_path()
     }
 
     pub fn get_zk(&mut self) -> Result<Zettelkasten> {
@@ -60,15 +64,13 @@ impl Database {
         id: impl AsRef<str>,
         date: DateTime,
     ) -> Result<Zettel> {
-        let rel_path = self.make_filename(title.as_ref());
-        let filename = rel_path.file_name().unwrap().to_str().unwrap().to_owned();
+        let path = self.make_filename(title.as_ref());
         let zettel = Zettel {
             created: date,
             modified: date,
             id: id.as_ref().to_owned(),
             title: title.as_ref().to_owned(),
-            filename,
-            rel_path,
+            path: path.to_str().unwrap().to_owned(),
         };
         Ok(zettel)
     }
@@ -103,8 +105,9 @@ mod test {
         let title = "a new blog post";
         let zettel = db.new_zettel(title, id, dt)?;
         zk.add(&zettel)?;
-        assert!(zettel.rel_path.exists(), "new zettel was not created on fs");
-        let data = std::fs::read_to_string(zettel.rel_path)?;
+        let zettel_path = Path::new(&zettel.path);
+        assert!(zettel_path.exists(), "new zettel was not created on fs");
+        let data = std::fs::read_to_string(zettel_path)?;
         let (fm, _) = {
             use extract_frontmatter::{config::Splitter, Extractor};
             let fm_extractor = Extractor::new(Splitter::EnclosingLines("---"));

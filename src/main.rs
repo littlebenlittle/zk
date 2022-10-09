@@ -1,5 +1,8 @@
 mod database;
+mod error;
 mod zettel;
+
+use error::Error;
 
 use std::path::PathBuf;
 
@@ -28,60 +31,19 @@ pub struct NewArgs {
     pub title: String,
 }
 
-#[derive(Debug)]
-pub enum Error {
-    IoError(std::io::Error),
-    SerializationError(serde_yaml::Error),
-    ZettelError(zettel::Error),
-    ChronoParseError(chrono::ParseError),
-    DirNotEmpty,
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::IoError(e)
-    }
-}
-
-impl From<std::io::ErrorKind> for Error {
-    fn from(e: std::io::ErrorKind) -> Self {
-        Self::IoError(e.into())
-    }
-}
-
-impl From<serde_yaml::Error> for Error {
-    fn from(e: serde_yaml::Error) -> Self {
-        Self::SerializationError(e)
-    }
-}
-
-impl From<zettel::Error> for Error {
-    fn from(e: zettel::Error) -> Self {
-        Self::ZettelError(e)
-    }
-}
-
-impl From<chrono::ParseError> for Error {
-    fn from(e: chrono::ParseError) -> Self {
-        Self::ChronoParseError(e)
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("database error")
-    }
-}
-
 type Result<T> = std::result::Result<T, Error>;
 type DateTime = chrono::DateTime<chrono::Local>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let mut db = database::yaml::Database::new(args.root_dir)?;
-    let mut zk = db.get_zk()?;
+    let mut zk = match db.get_zk() {
+        Ok(zk) => zk,
+        Err(e) => {
+            println!("error reading database file");
+            return Err(e);
+        }
+    };
     match args.cmd {
         Command::Init => {}
         Command::New(args) => {
@@ -102,7 +64,59 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::Sync => unimplemented!(),
+        Command::Sync => {
+            for entry in std::fs::read_dir(std::env::current_dir()?)? {
+                let entry: std::fs::DirEntry = entry?;
+                let path = entry.path();
+                if path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+                    .starts_with("_zettel")
+                {
+                    continue;
+                }
+                let zettel = zettel::parse_meta_yaml(&path)?;
+                if zettel.is_none() {
+                    continue;
+                }
+                let zettel = zettel.unwrap();
+                let id = zettel.get(&"id".into());
+                if id.is_none() {
+                    println!(
+                        "metadata for {} does not contain field id; skipping",
+                        path.to_str().unwrap()
+                    );
+                    continue;
+                }
+                let id = id.unwrap().as_str();
+                if id.is_none() {
+                    println!(
+                        "metadata for {} contains field id but value is not string; skipping",
+                        path.to_str().unwrap()
+                    );
+                    continue;
+                }
+                let id = id.unwrap();
+                let current_meta = zk.zettels.get_mut(id);
+                if current_meta.is_none() {
+                    println!(
+                        "no metadata with id {} for zettel at {}; skipping",
+                        id,
+                        path.to_str().unwrap(),
+                    );
+                }
+                let current_meta = current_meta.unwrap();
+                current_meta.path = path
+                    .strip_prefix(&db.root_dir())
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+            }
+        }
     }
     db.commit(zk)?;
     Ok(())
