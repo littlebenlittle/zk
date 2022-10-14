@@ -12,7 +12,6 @@ use std::{
 
 #[derive(Debug)]
 pub enum Error {
-    UnknownField,
     IoError(std::io::Error),
     SerializationError(serde_yaml::Error),
 }
@@ -21,7 +20,10 @@ impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("zk error")
+        match self {
+            Self::IoError(e) => e.fmt(f),
+            Self::SerializationError(e) => e.fmt(f),
+        }
     }
 }
 

@@ -71,7 +71,12 @@ impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("zk error")
+        match self {
+            Self::IoError(e) => e.fmt(f),
+            Self::YamlDatabaseError(e) => e.fmt(f),
+            Self::ZettelError(e) => e.fmt(f),
+            Self::ZettelkastenError(e) => e.fmt(f),
+        }
     }
 }
 
@@ -99,6 +104,8 @@ fn main() -> Result {
             })?;
         }
         Command::Sync => {
+            // TODO: update db metata for zettel if it's
+            // been updated in the file
             let curdir = std::env::current_dir()?;
             let dir_entries = std::fs::read_dir(curdir)?;
             for entry in dir_entries {

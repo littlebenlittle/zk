@@ -14,7 +14,11 @@ impl std::error::Error for Error {}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("zk error")
+        match self {
+            Self::IoError(e) => e.fmt(f),
+            Self::ZettelError(e) => e.fmt(f),
+            Self::SerializationError(e) => e.fmt(f),
+        }
     }
 }
 
@@ -70,7 +74,7 @@ impl Zettelkasten {
         }
         let mut file = File::create(&path)?;
         let zettel_str = zettel.as_string(&self.default_frontmatter)?;
-        file.write_all(zettel_str.as_bytes());
+        file.write_all(zettel_str.as_bytes())?;
         self.zettels
             .insert(zettel.meta.id.clone(), zettel.meta.clone());
         Ok(())
