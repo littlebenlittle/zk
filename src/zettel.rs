@@ -1,17 +1,47 @@
-use crate::{DateTime, Result, Error};
+use crate::DateTime;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::prelude::*,
-    path::{Path, PathBuf},
-};
+use std::io::BufReader;
+use std::{collections::HashMap, fs::File, io::prelude::*, path::Path};
 
-type Id = String;
+pub type Id = String;
 
-/// Metadata for a zettel
+#[derive(Debug)]
+pub enum Error {
+    UnknownField,
+    MissingFrontmatterDelimiter,
+    IoError(std::io::Error),
+    SerializationError(serde_yaml::Error),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
+    }
+}
+
+impl From<serde_yaml::Error> for Error {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::SerializationError(e)
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingFrontmatterDelimiter => f.write_str("missing frontmatter delimiter ---"),
+            Self::IoError(e) => e.fmt(f),
+            Self::SerializationError(e) => e.fmt(f),
+            Self::UnknownField => f.write_str("unknown field"),
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Zettel {
+pub struct ZettelMeta {
     pub created: DateTime,
     pub modified: DateTime,
     pub title: String,
@@ -21,115 +51,86 @@ pub struct Zettel {
     pub id: Id,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Zettel {
+    pub meta: ZettelMeta,
+    pub content: String,
+}
+
+impl AsRef<Self> for ZettelMeta {
+    fn as_ref<'a>(&'a self) -> &'a Self {
+        return &self;
+    }
+}
+
 impl AsRef<Self> for Zettel {
     fn as_ref<'a>(&'a self) -> &'a Self {
         return &self;
     }
 }
 
-/// Store of zettels on the filesystem
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Zettelkasten {
-    pub meta: ZkMeta,
-    pub default_frontmatter: serde_yaml::Mapping,
-    // TODO: should be BTreeMap
-    pub zettels: HashMap<String, Zettel>,
+impl Zettel {
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        Self::from_buf_reader(BufReader::new(File::open(&path)?))
+    }
+
+    pub fn from_str(buf: &str) -> Result<Self> {
+        Self::from_buf_reader(BufReader::new(buf.as_bytes()))
+    }
+
+    pub fn from_buf_reader<T: Read>(mut buf_reader: BufReader<T>) -> Result<Self> {
+        let meta = ZettelMeta::parse_yaml(&mut buf_reader)?;
+        let mut content = String::new();
+        buf_reader.read_to_string(&mut content)?;
+        Ok(Self { meta, content })
+    }
+
+    /// write zettel with frontmatter to string
+    ///
+    /// use '@key_name' to include metadata keys in fronmatter
+    /// supported key names are 'title', 'id', 'created'
+    pub fn as_string(&self, frontmatter: &HashMap<String, String>) -> Result<String> {
+        let mut fm = HashMap::new();
+        for (key, val) in frontmatter {
+            let new_val = if !val.starts_with("@") {
+                val.to_owned()
+            } else {
+                match &val[1..] {
+                    "title" => self.meta.title.clone(),
+                    "id" => self.meta.id.clone(),
+                    "created" => self.meta.created.format("%Y-%m-%d").to_string(),
+                    _ => return Err(Error::UnknownField),
+                }
+            };
+            fm.insert(key, new_val);
+        }
+        Ok(format!(
+            "{}\n---{}\n",
+            serde_yaml::to_string(&fm)?,
+            self.content
+        ))
+    }
 }
 
-impl AsRef<Self> for Zettelkasten {
-    fn as_ref<'a>(&'a self) -> &'a Self {
-        return &self;
-    }
-}
-
-impl Zettelkasten {
-    pub fn new(meta: ZkMeta, default_frontmatter: serde_yaml::Mapping) -> Self {
-        Self {
-            meta,
-            default_frontmatter,
-            zettels: HashMap::new(),
+impl ZettelMeta {
+    pub fn parse_yaml<T: Read>(buf_reader: &mut BufReader<T>) -> Result<Self> {
+        let mut lines = buf_reader.lines().peekable();
+        if !lines.next().unwrap()?.eq("---") {
+            return Err(Error::MissingFrontmatterDelimiter);
         }
-    }
-
-    pub fn add(&mut self, zettel: impl AsRef<Zettel>) -> Result<()> {
-        let zettel = zettel.as_ref();
-        let path = Path::new(&zettel.path);
-        if path.exists() {
-            return Err(std::io::ErrorKind::AlreadyExists.into());
+        let mut frontmatter = String::new();
+        loop {
+            if let Some(line) = lines.next() {
+                let line = line?;
+                if line.eq("---") {
+                    break;
+                }
+                frontmatter.push_str(&line);
+                frontmatter.push_str("\n");
+            } else {
+                return Err(Error::MissingFrontmatterDelimiter);
+            }
         }
-        let mut file = File::create(&path)?;
-        let fm = self.default_frontmatter(&zettel)?;
-        file.write_all(fm.as_bytes())?;
-        self.zettels.insert(zettel.id.clone(), zettel.clone());
-        Ok(())
-    }
-
-    pub fn default_frontmatter(&self, zettel: &Zettel) -> Result<String> {
-        let mut meta = serde_yaml::Mapping::new();
-        for (key, val) in &self.default_frontmatter {
-            let key = key
-                .as_str()
-                .expect("default_frontmatter keys should be of type str");
-            let val = val
-                .as_str()
-                .expect("default_frontmatter vals should be of type str");
-            meta.insert(key.into(), self.parse_global(val, zettel)?.into());
-        }
-        let fm = format!("{}---\n\n", serde_yaml::to_string(&meta)?);
-        Ok(fm)
-    }
-
-    pub fn rm(&self, zettel: impl AsRef<Zettel>) -> Result<()> {
-        let zettel: &Zettel = zettel.as_ref();
-        std::fs::remove_file(Path::new(&zettel.path))?;
-        Ok(())
-    }
-
-    fn parse_global(&self, val: &str, zettel: &Zettel) -> Result<String> {
-        if !val.starts_with("@") {
-            return Ok(val.to_owned());
-        }
-        match &val[1..] {
-            "title" => Ok(zettel.title.to_owned()),
-            "id" => Ok(zettel.id.to_owned()),
-            "created" => Ok(zettel.created.format("%Y-%m-%d").to_string()),
-            _ => Err(Error::UnknownField),
-        }
-    }
-
-}
-
-/// Metadata about the database
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct ZkMeta {
-    /// database creation time
-    pub created: DateTime,
-    /// last modificiation time
-    pub modified: DateTime,
-}
-
-pub fn parse_meta_yaml(path: &PathBuf) -> Result<Option<serde_yaml::Mapping>> {
-    use std::io::{BufReader};
-    let file = std::fs::File::open(path)?;
-    let mut lines = BufReader::new(file).lines().peekable();
-    if !lines.next().unwrap()?.eq("---") {
-        println!(
-            "file {} doesn't appear to contain frontmatter; first line should be '---'",
-            path.to_str().unwrap()
-        );
-        return Ok(None)
-    }
-    let mut frontmatter = String::new();
-    while lines.peek().is_some() {
-        let line: String = lines.next().unwrap()?;
-        if line.eq("---") {
-            break;
-        }
-        frontmatter.push_str(&line);
-        frontmatter.push_str("\n");
-    }
-    match serde_yaml::from_str(&frontmatter) {
-        Ok(fm) => Ok(fm),
-        Err(e) => Err(e.into())
+        Ok(serde_yaml::from_str(&frontmatter)?)
     }
 }
