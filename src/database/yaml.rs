@@ -3,7 +3,6 @@ use crate::{
     zettelkasten::{Zettelkasten, ZkMeta},
     DateTime,
 };
-use chrono::prelude::*;
 use std::{
     collections::HashMap,
     fs::File,
@@ -79,10 +78,10 @@ impl Database {
         return Ok(zk);
     }
 
-    fn make_filename(&self, title: &str) -> PathBuf {
+    fn make_filename(&self, title: &str, date: DateTime) -> PathBuf {
         let mod_title = title.replace(" ", "-");
         let mut path = self.root_dir.clone();
-        let date_str = Local::now().format("%Y-%m-%d");
+        let date_str = date.format("%Y-%m-%d");
         let filename = format!("{date_str}-{mod_title}.md");
         path.push(filename);
         path
@@ -101,7 +100,7 @@ impl Database {
         id: impl AsRef<str>,
         date: DateTime,
     ) -> Result<Zettel> {
-        let path = self.make_filename(title.as_ref());
+        let path = self.make_filename(title.as_ref(), date);
         let meta = ZettelMeta {
             created: date,
             modified: date,
@@ -120,6 +119,7 @@ impl Database {
 mod test {
     use super::*;
     use tempdir::TempDir;
+    use chrono::prelude::*;
 
     #[test]
     fn init_db() -> Result<()> {

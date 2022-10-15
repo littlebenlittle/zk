@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
-use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug)]
 pub enum Error {
@@ -36,6 +38,12 @@ impl std::fmt::Display for Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
+
+pub fn parse_yaml_path(path: impl AsRef<Path>) -> Result<serde_yaml::Mapping> {
+    let file = File::open(&path)?;
+    let mut buf_reader = BufReader::new(file);
+    parse_yaml(&mut buf_reader)
+}
 
 pub fn parse_yaml<T: Read>(buf_reader: &mut BufReader<T>) -> Result<serde_yaml::Mapping> {
     let mut lines = buf_reader.lines().peekable();
