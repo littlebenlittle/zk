@@ -1,4 +1,5 @@
 mod database;
+mod frontmatter;
 mod zettel;
 mod zettelkasten;
 
@@ -87,7 +88,7 @@ fn main() -> Result {
     let mut db = database::yaml::Database::new(args.root_dir)?;
     let mut zk = db.get_zk()?;
     match args.cmd {
-        Command::Init => {}
+        Command::Init => db.commit(&zk)?,
         Command::New(args) => {
             use rand::Rng;
             let id: String = rand::thread_rng()
@@ -123,18 +124,39 @@ fn main() -> Result {
                 }
                 let file = File::open(&path)?;
                 let mut buf_reader = BufReader::new(file);
-                let meta = match ZettelMeta::parse_yaml(&mut buf_reader) {
+                let fm = match frontmatter::parse_yaml(&mut buf_reader) {
                     Ok(meta) => meta,
                     Err(e) => {
-                        println!("skipping {}: {}", path.to_str().unwrap(), e);
+                        println!(
+                            "skipping {} due to frontmatter error: {}",
+                            path.to_str().unwrap(),
+                            e
+                        );
                         continue;
                     }
                 };
-                let current_meta = zk.zettels.get_mut(&meta.id);
+                let id: zettel::Id = {
+                    let id = fm.get(&"id".into());
+                    if id.is_none() {
+                        println!(
+                            "skipping {} due to missing key 'id' in frontmatter",
+                            path.to_str().unwrap()
+                        )
+                    }
+                    let id = id.unwrap().as_str();
+                    if id.is_none() {
+                        println!(
+                            "skipping {} due to 'id' in frontmatter not being a 'string'",
+                            path.to_str().unwrap()
+                        )
+                    }
+                    id.unwrap().to_owned()
+                };
+                let current_meta = zk.zettels.get_mut(&id);
                 if current_meta.is_none() {
                     println!(
                         "no metadata with id {} for zettel at {}; skipping",
-                        meta.id,
+                        id,
                         path.to_str().unwrap(),
                     );
                     continue;

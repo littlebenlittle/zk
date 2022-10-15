@@ -1,27 +1,18 @@
-use crate::DateTime;
+use crate::{frontmatter, DateTime};
 use serde::{Deserialize, Serialize};
-use std::io::BufReader;
-use std::{collections::HashMap, fs::File, io::prelude::*, path::Path};
+use std::collections::HashMap;
 
 pub type Id = String;
 
 #[derive(Debug)]
 pub enum Error {
     UnknownField,
-    MissingFrontmatterDelimiter,
-    IoError(std::io::Error),
-    SerializationError(serde_yaml::Error),
+    FrontmatterError(frontmatter::Error),
 }
 
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::IoError(e)
-    }
-}
-
-impl From<serde_yaml::Error> for Error {
-    fn from(e: serde_yaml::Error) -> Self {
-        Self::SerializationError(e)
+impl From<frontmatter::Error> for Error {
+    fn from(e: frontmatter::Error) -> Self {
+        Self::FrontmatterError(e)
     }
 }
 
@@ -30,9 +21,7 @@ impl std::error::Error for Error {}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingFrontmatterDelimiter => f.write_str("missing frontmatter delimiter ---"),
-            Self::IoError(e) => e.fmt(f),
-            Self::SerializationError(e) => e.fmt(f),
+            Self::FrontmatterError(e) => e.fmt(f),
             Self::UnknownField => f.write_str("unknown field"),
         }
     }
@@ -70,21 +59,6 @@ impl AsRef<Self> for Zettel {
 }
 
 impl Zettel {
-    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_buf_reader(BufReader::new(File::open(&path)?))
-    }
-
-    pub fn from_str(buf: &str) -> Result<Self> {
-        Self::from_buf_reader(BufReader::new(buf.as_bytes()))
-    }
-
-    pub fn from_buf_reader<T: Read>(mut buf_reader: BufReader<T>) -> Result<Self> {
-        let meta = ZettelMeta::parse_yaml(&mut buf_reader)?;
-        let mut content = String::new();
-        buf_reader.read_to_string(&mut content)?;
-        Ok(Self { meta, content })
-    }
-
     /// write zettel with frontmatter to string
     ///
     /// use '@key_name' to include metadata keys in fronmatter
@@ -102,35 +76,12 @@ impl Zettel {
                     _ => return Err(Error::UnknownField),
                 }
             };
-            fm.insert(key, new_val);
+            fm.insert(key.to_owned(), new_val);
         }
         Ok(format!(
             "{}\n---{}\n",
-            serde_yaml::to_string(&fm)?,
+            frontmatter::write_str(&fm)?,
             self.content
         ))
-    }
-}
-
-impl ZettelMeta {
-    pub fn parse_yaml<T: Read>(buf_reader: &mut BufReader<T>) -> Result<Self> {
-        let mut lines = buf_reader.lines().peekable();
-        if !lines.next().unwrap()?.eq("---") {
-            return Err(Error::MissingFrontmatterDelimiter);
-        }
-        let mut frontmatter = String::new();
-        loop {
-            if let Some(line) = lines.next() {
-                let line = line?;
-                if line.eq("---") {
-                    break;
-                }
-                frontmatter.push_str(&line);
-                frontmatter.push_str("\n");
-            } else {
-                return Err(Error::MissingFrontmatterDelimiter);
-            }
-        }
-        Ok(serde_yaml::from_str(&frontmatter)?)
     }
 }
