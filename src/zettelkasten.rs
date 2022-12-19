@@ -81,6 +81,23 @@ impl Zettelkasten {
     }
 }
 
+impl Default for Zettelkasten {
+    fn default() -> Self {
+        let now = chrono::Local::now();
+        let mut default_frontmatter = HashMap::new();
+        default_frontmatter.insert("title".to_owned(), "@title".to_owned());
+        default_frontmatter.insert("id".to_owned(), "@id".to_owned());
+        default_frontmatter.insert("date".to_owned(), "@created".to_owned());
+        Zettelkasten::new(
+            ZkMeta {
+                created: now,
+                modified: now,
+            },
+            default_frontmatter,
+        )
+    }
+}
+
 /// Metadata about the database
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ZkMeta {

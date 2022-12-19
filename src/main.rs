@@ -4,6 +4,7 @@ mod zettel;
 mod zettelkasten;
 
 pub(crate) use zettel::ZettelMeta;
+use zettelkasten::Zettelkasten;
 
 use std::path::PathBuf;
 
@@ -83,22 +84,32 @@ type Result = std::result::Result<(), Error>;
 
 fn main() -> Result {
     let args = Args::parse();
-    let mut db = database::yaml::Database::new(args.root_dir)?;
+    let db = database::yaml::Database::new(args.root_dir)?;
     match args.cmd {
         Command::Init => {
-            let zk = db.get_zk()?;
+            let zk = Zettelkasten::default();
             db.commit(zk)?;
         }
-        Command::New(args) => {
-            new(db, args.title, chrono::Local::now())?
-        }
+        Command::New(args) => new(db, args.title, chrono::Local::now())?,
         Command::Sync => sync(db)?,
     }
     Ok(())
 }
 
-fn new(mut db: database::yaml::Database, title: String, date: DateTime) -> Result {
-    let mut zk = db.get_zk()?;
+fn new(db: database::yaml::Database, title: String, date: DateTime) -> Result {
+    let mut zk = match db.get_zk()? {
+        Some(zk) => zk,
+        None => {
+            if dialoguer::Confirm::new()
+                .with_prompt("Database does not exist. Create it?")
+                .interact()?
+            {
+                Default::default()
+            } else {
+                return Ok(())
+            }
+        }
+    };
     use rand::Rng;
     let id: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
@@ -114,8 +125,14 @@ fn new(mut db: database::yaml::Database, title: String, date: DateTime) -> Resul
     Ok(())
 }
 
-fn sync(mut db: database::yaml::Database) -> Result {
-    let mut zk = db.get_zk()?;
+fn sync(db: database::yaml::Database) -> Result {
+    let mut zk = match db.get_zk()? {
+        Some(zk) => zk,
+        None => {
+            println!("Database does not exist. Use `init` first.");
+            return Ok(())
+        }
+    };
     let dir_entries = std::fs::read_dir(db.root_dir())?;
     for entry in dir_entries {
         let entry: std::fs::DirEntry = entry.unwrap();
@@ -193,6 +210,8 @@ mod test {
         let tmp_dir = tempdir::TempDir::new("zk_command_test").expect("couldn't create temp dir");
         let dir_path = tmp_dir.path().to_path_buf();
         let db = database::yaml::Database::new(dir_path.clone())?;
+        let zk = Zettelkasten::default();
+        db.commit(zk)?;
         let dt = chrono::Local.timestamp(1431648000, 0);
         super::new(db, "my blog post".to_owned(), dt)?;
         let mut zettel_path = dir_path.clone();
@@ -215,5 +234,4 @@ mod test {
         assert_eq!(meta.get(&"date".into()), Some(date));
         Ok(())
     }
-
 }

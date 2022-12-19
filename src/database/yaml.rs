@@ -55,27 +55,15 @@ impl Database {
         self.root_dir.as_path()
     }
 
-    pub fn get_zk(&mut self) -> Result<Zettelkasten> {
+    pub fn get_zk(&self) -> Result<Option<Zettelkasten>> {
         let mut path = self.root_dir.clone();
         path.push("_zettel.yaml");
-        let zk = if path.is_file() {
+        if path.is_file() {
             let file = File::open(path)?;
-            serde_yaml::from_reader(file)?
+            Ok(Some(serde_yaml::from_reader(file)?))
         } else {
-            let now = chrono::Local::now();
-            let mut default_frontmatter = HashMap::new();
-            default_frontmatter.insert("title".to_owned(), "@title".to_owned());
-            default_frontmatter.insert("id".to_owned(), "@id".to_owned());
-            default_frontmatter.insert("date".to_owned(), "@created".to_owned());
-            Zettelkasten::new(
-                ZkMeta {
-                    created: now,
-                    modified: now,
-                },
-                default_frontmatter,
-            )
-        };
-        return Ok(zk);
+            Ok(None)
+        }
     }
 
     fn make_filename(&self, title: &str, date: DateTime) -> PathBuf {
@@ -87,7 +75,7 @@ impl Database {
         path
     }
 
-    pub fn commit(&mut self, zk: impl AsRef<Zettelkasten>) -> Result<()> {
+    pub fn commit(&self, zk: impl AsRef<Zettelkasten>) -> Result<()> {
         let mut path = self.root_dir.clone();
         path.push("_zettel.yaml");
         serde_yaml::to_writer(File::create(&path)?, zk.as_ref())?;
@@ -95,7 +83,7 @@ impl Database {
     }
 
     pub fn new_zettel(
-        &mut self,
+        &self,
         title: impl AsRef<str>,
         id: impl AsRef<str>,
         date: DateTime,
@@ -118,14 +106,14 @@ impl Database {
 #[cfg(test)]
 mod test {
     use super::*;
-    use tempdir::TempDir;
     use chrono::prelude::*;
+    use tempdir::TempDir;
 
     #[test]
     fn init_db() -> Result<()> {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let mut db = Database::new(PathBuf::from(tmp_dir.path())).expect("could not create db");
-        let zk = db.get_zk()?;
+        let zk = Zettelkasten::default();
         db.commit(&zk)?;
         let mut db_path = PathBuf::from(tmp_dir.path());
         db_path.push("_zettel.yaml");
@@ -140,7 +128,7 @@ mod test {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let root_dir = PathBuf::from(tmp_dir.path());
         let mut db = Database::new(root_dir.clone())?;
-        let mut zk = db.get_zk()?;
+        let mut zk = Zettelkasten::default();
         let id = "123456";
         let dt = chrono::Local.timestamp(1431648000, 0);
         let title = "a new blog post";
@@ -174,7 +162,7 @@ mod test {
             "title in frontmatter does not match"
         );
         db.commit(zk)?;
-        let new_zk = db.get_zk()?;
+        let new_zk = db.get_zk()?.unwrap();
         assert!(
             new_zk.zettels.len() == 1,
             "new zettel should be reflected in db"
