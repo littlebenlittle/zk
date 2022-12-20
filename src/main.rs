@@ -224,8 +224,7 @@ mod test {
         let date = meta.get(&"date".into()).unwrap();
         let mut new_zettel_path = dir_path.clone();
         new_zettel_path.push(dt.format("new_path.md").to_string());
-        std::fs::hard_link(&zettel_path, &new_zettel_path)?;
-        std::fs::remove_file(&zettel_path)?;
+        std::fs::copy(&zettel_path, &new_zettel_path)?;
         let db = database::yaml::Database::new(dir_path.clone())?;
         super::sync(db)?;
         let meta = frontmatter::parse_yaml_path(&new_zettel_path).unwrap();
