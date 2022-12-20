@@ -1,9 +1,43 @@
 use crate::{
-    zettel::{Zettel, Zettelkasten, ZkMeta},
-    DateTime, Result,
+    zettel::{Zettel, ZettelMeta},
+    zettelkasten::{Zettelkasten, ZkMeta},
+    DateTime,
 };
-use chrono::prelude::*;
-use std::{fs::File, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    path::{Path, PathBuf},
+};
+
+#[derive(Debug)]
+pub enum Error {
+    IoError(std::io::Error),
+    SerializationError(serde_yaml::Error),
+}
+
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IoError(e) => e.fmt(f),
+            Self::SerializationError(e) => e.fmt(f),
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
+    }
+}
+
+impl From<serde_yaml::Error> for Error {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::SerializationError(e)
+    }
+}
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct Database {
@@ -12,42 +46,36 @@ pub struct Database {
 
 impl Database {
     pub fn new(root_dir: PathBuf) -> Result<Self> {
-        Ok(Self { root_dir })
+        Ok(Self {
+            root_dir: std::fs::canonicalize(root_dir).unwrap(),
+        })
     }
 
-    pub fn get_zk(&mut self) -> Result<Zettelkasten> {
+    pub fn root_dir(&self) -> &Path {
+        self.root_dir.as_path()
+    }
+
+    pub fn get_zk(&self) -> Result<Option<Zettelkasten>> {
         let mut path = self.root_dir.clone();
         path.push("_zettel.yaml");
-        let zk = if path.is_file() {
+        if path.is_file() {
             let file = File::open(path)?;
-            serde_yaml::from_reader(file)?
+            Ok(Some(serde_yaml::from_reader(file)?))
         } else {
-            let now = chrono::Local::now();
-            let mut default_frontmatter = serde_yaml::Mapping::new();
-            default_frontmatter.insert("title".into(), "@title".into());
-            default_frontmatter.insert("id".into(), "@id".into());
-            default_frontmatter.insert("date".into(), "@created".into());
-            Zettelkasten::new(
-                ZkMeta {
-                    created: now,
-                    modified: now,
-                },
-                default_frontmatter,
-            )
-        };
-        return Ok(zk);
+            Ok(None)
+        }
     }
 
-    fn make_filename(&self, title: &str) -> PathBuf {
+    fn make_filename(&self, title: &str, date: DateTime) -> PathBuf {
         let mod_title = title.replace(" ", "-");
         let mut path = self.root_dir.clone();
-        let date_str = Local::now().format("%Y-%m-%d");
+        let date_str = date.format("%Y-%m-%d");
         let filename = format!("{date_str}-{mod_title}.md");
         path.push(filename);
         path
     }
 
-    pub fn commit(&mut self, zk: impl AsRef<Zettelkasten>) -> Result<()> {
+    pub fn commit(&self, zk: impl AsRef<Zettelkasten>) -> Result<()> {
         let mut path = self.root_dir.clone();
         path.push("_zettel.yaml");
         serde_yaml::to_writer(File::create(&path)?, zk.as_ref())?;
@@ -55,34 +83,37 @@ impl Database {
     }
 
     pub fn new_zettel(
-        &mut self,
+        &self,
         title: impl AsRef<str>,
         id: impl AsRef<str>,
         date: DateTime,
     ) -> Result<Zettel> {
-        let rel_path = self.make_filename(title.as_ref());
-        let filename = rel_path.file_name().unwrap().to_str().unwrap().to_owned();
-        let zettel = Zettel {
+        let path = self.make_filename(title.as_ref(), date);
+        let meta = ZettelMeta {
             created: date,
             modified: date,
             id: id.as_ref().to_owned(),
             title: title.as_ref().to_owned(),
-            filename,
-            rel_path,
+            path: path.to_str().unwrap().to_owned(),
         };
-        Ok(zettel)
+        Ok(Zettel {
+            meta,
+            content: String::new(),
+        })
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use chrono::prelude::*;
     use tempdir::TempDir;
 
     #[test]
     fn init_db() -> Result<()> {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let mut db = Database::new(PathBuf::from(tmp_dir.path())).expect("could not create db");
-        let zk = db.get_zk()?;
+        let zk = Zettelkasten::default();
         db.commit(&zk)?;
         let mut db_path = PathBuf::from(tmp_dir.path());
         db_path.push("_zettel.yaml");
@@ -93,18 +124,19 @@ mod test {
     }
 
     #[test]
-    fn new_zettel() -> Result<()> {
+    fn new_zettel() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let tmp_dir = TempDir::new("zk_yaml_test").expect("couldn't create temp dir");
         let root_dir = PathBuf::from(tmp_dir.path());
         let mut db = Database::new(root_dir.clone())?;
-        let mut zk = db.get_zk()?;
+        let mut zk = Zettelkasten::default();
         let id = "123456";
         let dt = chrono::Local.timestamp(1431648000, 0);
         let title = "a new blog post";
         let zettel = db.new_zettel(title, id, dt)?;
         zk.add(&zettel)?;
-        assert!(zettel.rel_path.exists(), "new zettel was not created on fs");
-        let data = std::fs::read_to_string(zettel.rel_path)?;
+        let zettel_path = Path::new(&zettel.meta.path);
+        assert!(zettel_path.exists(), "new zettel was not created on fs");
+        let data = std::fs::read_to_string(zettel_path)?;
         let (fm, _) = {
             use extract_frontmatter::{config::Splitter, Extractor};
             let fm_extractor = Extractor::new(Splitter::EnclosingLines("---"));
@@ -130,7 +162,7 @@ mod test {
             "title in frontmatter does not match"
         );
         db.commit(zk)?;
-        let new_zk = db.get_zk()?;
+        let new_zk = db.get_zk()?.unwrap();
         assert!(
             new_zk.zettels.len() == 1,
             "new zettel should be reflected in db"
