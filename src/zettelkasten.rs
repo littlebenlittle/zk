@@ -97,24 +97,24 @@ impl Zettelkasten {
         Default::default()
     }
 
-    /// open a zettelkasten from its database file. Returns `None`
-    /// if the file does not exist.
+    /// Returns `None` if the path does not exist.
     pub fn open(path: impl AsRef<Path>) -> Result<Option<Self>> {
         let path = path.as_ref();
         if !path.exists() {
             return Ok(None);
         }
-        if path.is_dir() {
-            // TODO search for _zettel.*
-            return Err("calling `open` on a directory is not yet supported".into());
-        }
+        let path = match resolve_db_path(path)? {
+            Some(path) => path,
+            None => return Ok(None),
+        };
         let filename = path
             .file_name()
             .ok_or_else(|| format!("doesn't appear to be a file: {}", path.display()))?
             .to_str()
-            .unwrap();
+            .unwrap()
+            .to_owned();
         let contents: ZkContents = {
-            let file = File::open(path)?;
+            let file = File::open(&path)?;
             match filename.split(".").last() {
                 Some("yaml") | Some("yml") => serde_yaml::from_reader(file)?,
                 Some(suf) => return Err(format!("unrecognized db suffix {suf}").into()),
@@ -343,6 +343,20 @@ impl ZettelkastenBuilder {
     }
 }
 
+fn resolve_db_path(path: &Path) -> Result<Option<PathBuf>> {
+    if path.is_dir() {
+        let mut yaml_path = PathBuf::from(&path);
+        yaml_path.push("_zettel.yaml");
+        if yaml_path.exists() {
+            return Ok(Some(yaml_path));
+        } else {
+            return Err(format!("could not locate database file in {}", path.display()).into());
+        }
+    } else {
+        Ok(Some(path.to_owned()))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -356,6 +370,7 @@ mod test {
         let mut zk = Zettelkasten::builder()
             .root_path(tmp_dir.path())
             .yaml()
+            .add_subdir("2022")
             .build()
             .context("building zk")?;
         let zettel = Zettel::builder()
@@ -365,6 +380,7 @@ mod test {
             .build();
         zk.add(&zettel).context("adding zettel to zk")?;
         let mut new_zettel_path = PathBuf::from(zk.root_path());
+        new_zettel_path.push("2022");
         new_zettel_path.push("other.md");
         let old_zettel_path = zk
             .path_to(zettel.uuid())
