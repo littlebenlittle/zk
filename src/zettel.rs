@@ -1,8 +1,9 @@
-use crate::{frontmatter, DateTime};
+use crate::frontmatter;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 pub type Id = String;
+type DateTime = chrono::DateTime<chrono::Local>;
 
 #[derive(Debug)]
 pub enum Error {
@@ -52,6 +53,12 @@ impl AsRef<Self> for ZettelMeta {
     }
 }
 
+impl ZettelMeta {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
 impl AsRef<Self> for Zettel {
     fn as_ref<'a>(&'a self) -> &'a Self {
         return &self;
@@ -59,6 +66,14 @@ impl AsRef<Self> for Zettel {
 }
 
 impl Zettel {
+    pub fn builder() -> ZettelBuilder {
+        Default::default()
+    }
+
+    pub fn uuid(&self) -> &Id {
+        &self.meta.id
+    }
+
     /// write zettel with frontmatter to string
     ///
     /// use '@key_name' to include metadata keys in fronmatter
@@ -84,4 +99,83 @@ impl Zettel {
             self.content
         ))
     }
+}
+
+#[derive(Clone)]
+pub struct ZettelBuilder {
+    title: Option<String>,
+    created: Option<DateTime>,
+    modified: Option<DateTime>,
+    subdir: Option<String>,
+    content: Option<String>,
+    uuid: Option<Id>,
+}
+
+impl Default for ZettelBuilder {
+    fn default() -> Self {
+        Self {
+            title: None,
+            created: None,
+            modified: None,
+            subdir: None,
+            content: None,
+            uuid: None,
+        }
+    }
+}
+
+impl ZettelBuilder {
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn created(mut self, created: impl Into<DateTime>) -> Self {
+        self.created = Some(created.into());
+        self
+    }
+
+    pub fn subdir(mut self, subdir: impl Into<String>) -> Self {
+        self.subdir = Some(subdir.into());
+        self
+    }
+
+    pub fn content(mut self, content: impl Into<String>) -> Self {
+        self.content = Some(content.into());
+        self
+    }
+
+    pub fn build(self) -> Zettel {
+        Zettel {
+            meta: {
+                let created = self.created.unwrap_or(chrono::Local::now());
+                let title = self.title.unwrap_or("my zettel".into());
+                ZettelMeta {
+                    created,
+                    modified: self.modified.unwrap_or(created),
+                    path: {
+                        let mut path = PathBuf::from(self.subdir.unwrap_or("".into()));
+                        path.push(make_filename(&title));
+                        path.as_os_str().to_str().unwrap().into()
+                    },
+                    title,
+                    id: self.uuid.unwrap_or(rand_id()),
+                }
+            },
+            content: self.content.unwrap_or("\n".into()),
+        }
+    }
+}
+
+fn rand_id() -> Id {
+    use rand::Rng;
+    rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(18)
+        .map(char::from)
+        .collect()
+}
+
+fn make_filename(title: &str) -> String {
+    format!("{}.md", title.replace(" ", "-"))
 }

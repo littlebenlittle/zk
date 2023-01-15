@@ -17,3 +17,4 @@ rand = "0.8"
 [dev-dependencies]
 tempdir = "0.3"
 extract-frontmatter = "4.1"
+anyhow = "1.0.68"
