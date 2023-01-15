@@ -1,4 +1,3 @@
-//mod database;
 mod frontmatter;
 mod zettel;
 mod zettelkasten;
@@ -37,7 +36,6 @@ pub struct NewArgs {
 
 #[derive(Debug)]
 pub enum Error {
-    // YamlDatabaseError(database::yaml::Error),
     ZettelError(zettel::Error),
     ZettelkastenError(zettelkasten::Error),
     IoError(std::io::Error),
@@ -48,12 +46,6 @@ impl From<std::io::Error> for Error {
         Self::IoError(e)
     }
 }
-
-// impl From<database::yaml::Error> for Error {
-//     fn from(e: database::yaml::Error) -> Self {
-//         Self::YamlDatabaseError(e)
-//     }
-// }
 
 impl From<zettel::Error> for Error {
     fn from(e: zettel::Error) -> Self {
@@ -84,36 +76,30 @@ type Result<T> = std::result::Result<T, Error>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    match args.cmd {
-        Command::Init => {
-            Zettelkasten::builder().build()?.commit()?;
-        }
-        Command::New(new_args) => {
-            let mut zk = match Zettelkasten::open(args.root_dir)? {
-                Some(zk) => zk,
-                None => match confirm_db_creation()? {
-                    Some(zk) => zk,
-                    None => return Ok(()),
-                },
-            };
-            let zettel = Zettel::builder()
-                .title(new_args.title)
-                .created(chrono::Local.timestamp(1431648000, 0))
-                .content("\n")
-                .build();
-            zk.add(zettel)?;
-            zk.commit()?;
-        }
-        Command::Sync => {
-            match Zettelkasten::open(args.root_dir)? {
-                Some(mut zk) => {
-                    zk.sync()?;
-                    zk.commit()?;
-                }
-                None => println!("no database file found"),
-            };
-        }
+    if let Command::Init = args.cmd {
+        Zettelkasten::builder().build()?.commit()?;
     }
+    let mut zk = match Zettelkasten::open(args.root_dir)? {
+        Some(zk) => zk,
+        None => match confirm_db_creation()? {
+            Some(zk) => zk,
+            None => return Ok(()),
+        },
+    };
+    match args.cmd {
+        Command::New(new_args) => {
+            zk.add(
+                Zettel::builder()
+                    .title(new_args.title)
+                    .created(chrono::Local.timestamp(1431648000, 0))
+                    .content("\n")
+                    .build(),
+            )?;
+        }
+        Command::Sync => zk.sync()?,
+        _ => unreachable!(),
+    }
+    zk.commit()?;
     Ok(())
 }
 

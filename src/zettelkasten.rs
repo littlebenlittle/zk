@@ -170,6 +170,7 @@ impl Zettelkasten {
     }
 
     /// compute the absolute path of the given relative path
+    /// i.e., stick the root_path in front of if
     fn abs_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let mut abs_path = PathBuf::from(self.root_path());
         abs_path.push(path);
