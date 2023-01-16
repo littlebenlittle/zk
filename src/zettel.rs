@@ -94,7 +94,7 @@ impl Zettel {
             fm.insert(key.to_owned(), new_val);
         }
         Ok(format!(
-            "{}\n---{}\n",
+            "{}\n---\n\n{}\n",
             frontmatter::write_str(&fm)?,
             self.content
         ))

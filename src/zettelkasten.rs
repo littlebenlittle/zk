@@ -178,7 +178,11 @@ impl Zettelkasten {
     }
 
     pub fn sync(&mut self) -> Result<()> {
-        let dir_entries = std::fs::read_dir(self.root_path())?;
+        self.sync_dir(self.root_path().to_owned())
+    }
+
+    fn sync_dir(&mut self, dir_path: PathBuf) -> Result<()> {
+        let dir_entries = std::fs::read_dir(&dir_path)?;
         for entry in dir_entries {
             let entry: std::fs::DirEntry = entry.unwrap();
             let path = entry.path();
@@ -187,63 +191,70 @@ impl Zettelkasten {
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .to_owned()
                 .starts_with("_zettel")
             {
                 continue;
             }
-            let fm = match crate::frontmatter::parse_yaml_path(&path) {
-                Ok(meta) => meta,
-                Err(e) => {
-                    println!(
-                        "skipping {} due to frontmatter error: {}",
-                        path.to_str().unwrap(),
-                        e
-                    );
-                    continue;
-                }
-            };
-            let id: zettel::Id = {
-                let id = fm.get(&"id".into());
-                if id.is_none() {
-                    println!(
-                        "skipping {} due to missing key 'id' in frontmatter",
-                        path.to_str().unwrap()
-                    );
-                    continue;
-                }
-                let id = id.unwrap().as_str();
-                if id.is_none() {
-                    println!(
-                        "skipping {} due to 'id' in frontmatter not being a 'string'",
-                        path.to_str().unwrap()
-                    );
-                    continue;
-                }
-                id.unwrap().to_owned()
-            };
-            let root_path = self.root_path().to_owned();
-            let current_meta = self.contents.zettels.get_mut(&id);
-            if current_meta.is_none() {
-                println!(
-                    "no metadata with id {} for zettel at {}; skipping",
-                    id,
-                    path.to_str().unwrap(),
-                );
-                continue;
-            }
-            let current_meta = current_meta.unwrap();
-            current_meta.path = path
-                .strip_prefix(root_path)
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_owned();
-            if let Some(title) = fm.get(&"title".into()).and_then(|t| t.as_str()) {
-                current_meta.title = title.to_owned()
+            if path.is_dir() {
+                self.sync_dir(path)?;
+            } else {
+                self.sync_file(path);
             }
         }
         Ok(())
+    }
+
+    fn sync_file(&mut self, path: PathBuf) {
+        let fm = match crate::frontmatter::parse_yaml_path(&path) {
+            Ok(meta) => meta,
+            Err(e) => {
+                println!(
+                    "skipping {} due to frontmatter error: {}",
+                    path.to_str().unwrap(),
+                    e
+                );
+                return;
+            }
+        };
+        let id: zettel::Id = {
+            let id = fm.get(&"id".into());
+            if id.is_none() {
+                println!(
+                    "skipping {} due to missing key 'id' in frontmatter",
+                    path.to_str().unwrap()
+                );
+                return;
+            }
+            let id = id.unwrap().as_str();
+            if id.is_none() {
+                println!(
+                    "skipping {} due to 'id' in frontmatter not being a 'string'",
+                    path.to_str().unwrap()
+                );
+                return;
+            }
+            id.unwrap().to_owned()
+        };
+        let root_path = self.root_path().to_owned();
+        let current_meta = self.contents.zettels.get_mut(&id);
+        if current_meta.is_none() {
+            println!(
+                "no metadata with id {} for zettel at {}; skipping",
+                id,
+                path.to_str().unwrap(),
+            );
+            return;
+        }
+        let current_meta = current_meta.unwrap();
+        current_meta.path = path
+            .strip_prefix(root_path)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        if let Some(title) = fm.get(&"title".into()).and_then(|t| t.as_str()) {
+            current_meta.title = title.to_owned()
+        }
     }
 
     /// Export state to database file
@@ -351,7 +362,7 @@ fn resolve_db_path(path: &Path) -> Result<Option<PathBuf>> {
         if yaml_path.exists() {
             return Ok(Some(yaml_path));
         } else {
-            return Err(format!("could not locate database file in {}", path.display()).into());
+            return Ok(None);
         }
     } else {
         Ok(Some(path.to_owned()))
@@ -367,6 +378,7 @@ mod test {
 
     #[test]
     fn create_and_sync() -> Result<()> {
+        env_logger::init();
         let tmp_dir = tempdir::TempDir::new("zk_command_test")?;
         let mut zk = Zettelkasten::builder()
             .root_path(tmp_dir.path())
@@ -380,19 +392,35 @@ mod test {
             .content("A post.")
             .build();
         zk.add(&zettel).context("adding zettel to zk")?;
+        let zettel_meta = zk
+            .get(zettel.uuid())
+            .expect("zettul uuid should be in database before sync")
+            .clone();
         let mut new_zettel_path = PathBuf::from(zk.root_path());
         new_zettel_path.push("2022");
         new_zettel_path.push("other.md");
         let old_zettel_path = zk
-            .path_to(zettel.uuid())
+            .path_to(&zettel_meta.id)
             .context("retrieving zettel path")?;
         std::fs::copy(&old_zettel_path, &new_zettel_path).context("copying zettel")?;
         std::fs::remove_file(old_zettel_path).context("removing zettel")?;
         zk.sync()?;
-        let new_zettel = zk
-            .get(zettel.uuid())
+        let new_zettel_meta = zk
+            .get(&zettel_meta.id)
             .expect("zettel uuid should be in database after sync");
-        assert_eq!(zettel.meta, *new_zettel);
+        assert_eq!(
+            zk.path_to(&zettel_meta.id)?
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "2022"
+        );
+        assert_eq!(zettel_meta.created, new_zettel_meta.created);
+        assert_eq!(zettel_meta.modified, new_zettel_meta.modified);
+        assert_eq!(zettel_meta.title, new_zettel_meta.title);
         Ok(())
     }
 
